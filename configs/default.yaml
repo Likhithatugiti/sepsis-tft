@@ -1,0 +1,136 @@
+data:
+  raw_dir: data/raw
+  processed_dir: data/processed
+  splits_dir: data/splits
+  target_col: SepsisLabel
+  time_col: hour
+  patient_col: patient_id
+  horizon: 6                  # predict sepsis 6h ahead
+  lookback: 48                # hours of history to use
+  train_ratio: 0.70
+  val_ratio: 0.15
+  test_ratio: 0.15
+  seed: 42
+
+features:
+  vitals:
+    - HR          # Heart rate
+    - O2Sat       # Pulse oximetry
+    - Temp        # Temperature
+    - SBP         # Systolic BP
+    - MAP         # Mean arterial pressure
+    - DBP         # Diastolic BP
+    - Resp        # Respiration rate
+    - EtCO2       # End-tidal CO2
+  labs:
+    - BaseExcess
+    - HCO3
+    - FiO2
+    - pH
+    - PaCO2
+    - SaO2
+    - AST
+    - BUN
+    - Alkalinephos
+    - Calcium
+    - Chloride
+    - Creatinine
+    - Bilirubin_direct
+    - Glucose
+    - Lactate
+    - Magnesium
+    - Phosphate
+    - Potassium
+    - Bilirubin_total
+    - TroponinI
+    - Hct
+    - Hgb
+    - PTT
+    - WBC
+    - Fibrinogen
+    - Platelets
+  demographics:
+    - Age
+    - Gender
+    - Unit1
+    - Unit2
+    - HospAdmTime
+    - ICULOS
+  engineered:
+    - sofa_score
+    - shock_index          # HR / SBP
+    - lactate_trend_3h
+    - map_hr_product
+    - wbc_trend_6h
+
+preprocessing:
+  imputation: forward_fill   # forward_fill | knn | median
+  knn_neighbors: 5
+  normalisation: zscore      # zscore | minmax
+  waveform_window_hours: 6   # CNN branch window size
+
+model:
+  # CNN branch
+  cnn:
+    in_channels: 8           # vitals only for waveform branch
+    channels: [32, 64, 128]
+    kernel_sizes: [3, 3, 3]
+    dropout: 0.1
+
+  # TFT core
+  tft:
+    d_model: 128
+    n_heads: 8
+    n_encoder_layers: 2
+    n_decoder_layers: 2
+    d_ff: 256
+    dropout: 0.1
+    attn_dropout: 0.1
+    max_seq_len: 48
+
+  # Gating
+  gating:
+    hidden_dim: 128
+    dropout: 0.1
+
+  # Risk head
+  risk_head:
+    hidden_dims: [128, 64]
+    dropout: 0.2
+
+training:
+  epochs: 50
+  batch_size: 64
+  lr: 3.0e-4
+  weight_decay: 1.0e-4
+  gradient_clip: 1.0
+  warmup_steps: 500
+  scheduler: cosine           # cosine | step | none
+
+  # Focal loss
+  focal_loss:
+    gamma: 2.0
+    alpha: 0.75
+
+  # Elastic Weight Consolidation
+  ewc:
+    enabled: true
+    lambda: 400
+    update_frequency: nightly
+
+  early_stopping:
+    patience: 10
+    metric: val_auroc
+    mode: max
+
+  device: cuda                # cuda | cpu | mps
+
+deployment:
+  host: 0.0.0.0
+  port: 8000
+  risk_threshold: 0.35        # alert if P(sepsis) > threshold
+  shap_background_samples: 100
+  streaming:
+    mode: rest                # rest | kafka
+    kafka_bootstrap: localhost:9092
+    kafka_topic: icu_vitals
